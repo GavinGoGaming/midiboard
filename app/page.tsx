@@ -1,95 +1,123 @@
-import Image from "next/image";
-import styles from "./page.module.css";
+"use client";
+import { Button, CssVarsProvider } from "@mui/joy";
+import { useEffect, useState } from "react";
+import Grid from "./Grid";
 
 export default function Home() {
-  return (
-    <div className={styles.page}>
-      <main className={styles.main}>
-        <Image
-          className={styles.logo}
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol>
-          <li>
-            Get started by editing <code>app/page.tsx</code>.
-          </li>
-          <li>Save and see your changes instantly.</li>
-        </ol>
+  const [devices, setDevices] = useState<MIDIInput[]>([]);
+  const [selectedDevice, setSelectedDevice] = useState<MIDIInput | null>(null);
+  const [tileMappings, setTileMappings] = useState<Record<number, string>>({});
 
-        <div className={styles.ctas}>
-          <a
-            className={styles.primary}
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className={styles.logo}
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-            className={styles.secondary}
-          >
-            Read our docs
-          </a>
-        </div>
-      </main>
-      <footer className={styles.footer}>
-        <a
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
-    </div>
+  const [audios, setAudios] = useState<HTMLAudioElement[]>([]);
+
+  function onMessage(_: MIDIInput, event: MIDIMessageEvent) {
+    if (!event.data) return;
+    const data = {
+      note: event.data[1],
+      heldAmount: event.data[2],
+      command: event.data[0] >> 4,
+    };
+    if (data.heldAmount === 0) return;
+
+    setTileMappings((prevMappings) => {
+      console.log(prevMappings);
+      const audioFile = prevMappings[data.note];
+      if (audioFile) {
+        const audio = new Audio(audioFile);
+        setAudios((prevAudios) => [...prevAudios, audio]);
+        audio.play();
+      }
+      return prevMappings;
+    });
+  }
+
+  useEffect(() => {
+    navigator.requestMIDIAccess().then((access) => {
+      const inputs = access.inputs.values();
+      const devices = [];
+      for (let input = inputs.next(); input && !input.done; input = inputs.next()) {
+        devices.push(input.value);
+        input.value.onmidimessage = onMessage.bind(null, input.value);
+      }
+      setDevices(devices);
+    });
+  }, []);
+
+  const handleTileClick = (id: number) => {
+    const fileInput = document.createElement("input");
+    fileInput.type = "file";
+    fileInput.accept = "audio/mp3";
+    fileInput.onchange = (event) => {
+      const file = (event.target as HTMLInputElement).files?.[0];
+      if (file) {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const audioUrl = reader.result as string;
+          setTileMappings((prevMappings) => ({
+            ...prevMappings,
+            [id]: audioUrl,
+          }));
+        };
+        reader.readAsDataURL(file);
+      }
+    };
+    fileInput.click();
+  };
+
+  const saveJSON = () => {
+    const blob = new Blob([JSON.stringify(tileMappings, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "tileMappings.json";
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const loadJSON = () => {
+    const fileInput = document.createElement("input");
+    fileInput.type = "file";
+    fileInput.accept = "application/json";
+    fileInput.onchange = (event) => {
+      const file = (event.target as HTMLInputElement).files?.[0];
+      if (file) {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const mappings = JSON.parse(reader.result as string);
+          setTileMappings(mappings);
+        };
+        reader.readAsText(file);
+      }
+    };
+    fileInput.click();
+  };
+
+  const grid = Grid(handleTileClick, tileMappings);
+
+  return (
+    <CssVarsProvider defaultMode="dark">
+      <div className="main">
+        {selectedDevice ? (
+          <>
+            <Button onClick={saveJSON}>Save Mappings</Button>
+            <Button onClick={loadJSON}>Load Mappings</Button>
+            <Button onClick={() => setSelectedDevice(null)}>Back</Button>
+            <div>Selected Device: {selectedDevice.name}</div>
+            {grid.element}
+          </>
+        ) : (
+          devices.map((d) => (
+            <Button
+              key={d.id}
+              onClick={() => {
+                setSelectedDevice(d);
+              }}
+            >
+              {d.name}
+            </Button>
+          ))
+        )}
+      </div>
+    </CssVarsProvider>
   );
 }
